@@ -1,0 +1,27 @@
+1
+00:00:00,250 --> 00:00:04,050
+Complete business overview
+
+2
+00:00:04,750 --> 00:00:08,550
+Customers and service history
+
+3
+00:00:09,250 --> 00:00:13,050
+Track service and job status
+
+4
+00:00:13,750 --> 00:00:17,550
+Projects, BOQs and quotations
+
+5
+00:00:18,250 --> 00:00:22,050
+AMC visits and follow-ups
+
+6
+00:00:22,750 --> 00:00:26,550
+Inventory and spare parts
+
+7
+00:00:27,250 --> 00:00:31,050
+Material issue and reports

@@ -1,0 +1,7 @@
+customer_name,company_name,category,phone,email,city,state
+Aarav Sharma,,WARRANTY,9000000101,aarav.demo@example.com,Delhi,Delhi
+Green Valley Residency,Green Valley RWA,AMC,9000000102,facility.greenvalley@example.com,Gurugram,Haryana
+Northstar Business Park,Northstar Facilities Pvt Ltd,AMC,9000000103,ops.northstar@example.com,Noida,Uttar Pradesh
+Maya Kapoor,,GENERAL,9000000104,maya.demo@example.com,Jaipur,Rajasthan
+Bluebay Hotel,Bluebay Hospitality LLP,AMC,9000000105,maintenance.bluebay@example.com,Chandigarh,Chandigarh
+MetroCare Clinic,MetroCare Health Services,WARRANTY,9000000106,admin.metrocare@example.com,Ludhiana,Punjab

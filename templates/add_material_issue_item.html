@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+
+{% block title %}
+Add Material Issue Item
+{% endblock %}
+
+{% block content %}
+
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css" rel="stylesheet">
+<style>
+    .ts-dropdown .option {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.4;
+    }
+</style>
+
+<div class="min-h-screen bg-slate-50 px-4 py-8">
+
+    <div class="max-w-5xl mx-auto">
+
+        <div class="bg-gradient-to-r from-[#0F4C81] to-[#1B6CA8] rounded-3xl p-8 shadow-xl mb-8">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-4xl font-black text-white">Add Material Item</h1>
+                    <p class="text-blue-100 mt-2">Material Issue : {{ material_issue.issue_id }}</p>
+                </div>
+                <a href="{% url 'material_issue_detail' material_issue.id %}"
+                   class="bg-white text-[#0F4C81] px-5 py-3 rounded-2xl font-bold">Back</a>
+            </div>
+        </div>
+
+        {% if error %}
+        <div class="mb-6 bg-red-50 border border-red-200 text-red-700 p-4 rounded-2xl">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST">
+            {% csrf_token %}
+
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+                    <div>
+                        <label class="block font-bold mb-2">Category</label>
+                        <select name="category" id="category-filter"
+                                class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                            <option value="">All Categories</option>
+                            {% for category in categories %}
+                            <option value="{{ category.id }}">{{ category.category_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold mb-2">Store Item *</label>
+                        <select name="store_item" id="store-item-select" required
+                                class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                            <option value="">Search by name, code or category...</option>
+                            {% for item in store_items %}
+                            <option value="{{ item.id }}" data-category="{{ item.category.id }}">
+                                [{{ item.category.category_name }}] {{ item.item_code }} - {{ item.item_description }}
+                                {% if item.size %} - {{ item.size }}{% endif %}
+                                | Stock: {{ item.current_stock }} {{ item.get_unit_display }}
+                                {% if item.item_type_label %}| {{ item.item_type_label }}{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold mb-2">BOQ Item</label>
+                        <select name="boq_item" id="boq-item-select"
+                                class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                            <option value="">Select BOQ Item (optional)</option>
+                            {% for item in boq_items %}
+                            <option value="{{ item.id }}"
+                                    data-store-item="{{ item.store_item.id }}"
+                                    data-category="{{ item.store_item.category.id }}">
+                                {{ item.store_item.item_code }} - {{ item.store_item.item_description }}
+                                {% if item.store_item.size %} - {{ item.store_item.size }}{% endif %}
+                                | Required: {{ item.required_quantity }}
+                                | Balance: {{ item.balance_quantity }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold mb-2">Issued Quantity *</label>
+                        <input type="number" step="0.01" min="0" value="0" required
+                               name="issued_quantity"
+                               class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                    </div>
+
+                    <div>
+                        <label class="block font-bold mb-2">Remarks</label>
+                        <input type="text" name="remarks" placeholder="Material remarks"
+                               class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                    </div>
+
+                    <div>
+                        <label class="block font-bold mb-2">Serial Number</label>
+                        <input type="text" name="serial_number"
+                               placeholder="Serial number, if applicable"
+                               class="w-full border border-slate-300 rounded-2xl px-4 py-3">
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="mt-6 flex gap-3">
+                <button type="submit" class="bg-[#0F4C81] text-white px-8 py-4 rounded-2xl font-black">Save Item</button>
+                <a href="{% url 'material_issue_detail' material_issue.id %}"
+                   class="bg-slate-200 text-slate-700 px-8 py-4 rounded-2xl font-black">Cancel</a>
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<script>
+    var categorySelect = new TomSelect('#category-filter', {
+        create: false,
+        placeholder: 'Search category...'
+    });
+    var storeItemSelect = new TomSelect('#store-item-select', {
+        create: false,
+        maxOptions: 5000,
+        placeholder: 'Search by item name, code or category...',
+        searchField: ['text']
+    });
+    var boqItemSelect = new TomSelect('#boq-item-select', {
+        create: false,
+        placeholder: 'Select BOQ item...',
+        searchField: ['text']
+    });
+
+    document.getElementById('category-filter').addEventListener('change', function() {
+        var categoryId = this.value;
+        var storeSelect = document.getElementById('store-item-select');
+        var boqSelect = document.getElementById('boq-item-select');
+        if (storeItemSelect) storeItemSelect.destroy();
+        if (boqItemSelect) boqItemSelect.destroy();
+        [storeSelect, boqSelect].forEach(function(select) {
+            Array.from(select.options).forEach(function(option) {
+                if (!option.value) return;
+                var visible = !categoryId || option.dataset.category === categoryId;
+                option.hidden = !visible;
+                option.disabled = !visible;
+            });
+            if (select.selectedOptions[0] && select.selectedOptions[0].disabled) {
+                select.value = '';
+            }
+        });
+        storeItemSelect = new TomSelect('#store-item-select', {
+            create: false,
+            maxOptions: 5000,
+            placeholder: 'Search by item name, code or category...',
+            searchField: ['text']
+        });
+        boqItemSelect = new TomSelect('#boq-item-select', {
+            create: false,
+            placeholder: 'Select BOQ item...',
+            searchField: ['text']
+        });
+    });
+
+    document.getElementById('store-item-select').addEventListener('change', function() {
+        var storeItemId = this.value;
+        if (!storeItemId) return;
+        var boqSelect = document.getElementById('boq-item-select');
+        var matches = Array.from(boqSelect.options).filter(function(option) {
+            return !option.disabled && option.value
+                && option.dataset.storeItem === storeItemId;
+        });
+        if (matches.length === 1) {
+            boqItemSelect.setValue(matches[0].value, true);
+        } else {
+            var selected = boqSelect.selectedOptions[0];
+            if (selected && selected.value && selected.dataset.storeItem !== storeItemId) {
+                boqItemSelect.clear(true);
+            }
+        }
+    });
+
+    document.getElementById('boq-item-select').addEventListener('change', function() {
+        var option = this.selectedOptions[0];
+        if (!option || !option.value) return;
+        categorySelect.setValue(option.dataset.category, true);
+        document.getElementById('category-filter').dispatchEvent(new Event('change'));
+        storeItemSelect.setValue(option.dataset.storeItem, true);
+    });
+</script>
+
+{% endblock %}

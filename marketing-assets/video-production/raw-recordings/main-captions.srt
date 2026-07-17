@@ -1,0 +1,63 @@
+1
+00:00:00,250 --> 00:00:05,550
+Complete business overview
+
+2
+00:00:06,250 --> 00:00:11,050
+Manage all customers in one place
+
+3
+00:00:11,750 --> 00:00:16,550
+Open full customer details
+
+4
+00:00:17,250 --> 00:00:22,050
+Maintain complete service history
+
+5
+00:00:22,750 --> 00:00:27,550
+Track service schedules
+
+6
+00:00:28,250 --> 00:00:33,050
+Monitor repair job status
+
+7
+00:00:33,750 --> 00:00:38,550
+Review a service request
+
+8
+00:00:39,250 --> 00:00:44,050
+Manage installation projects
+
+9
+00:00:44,750 --> 00:00:50,050
+Open commercial project details
+
+10
+00:00:50,750 --> 00:00:56,050
+Prepare BOQs and quotations
+
+11
+00:00:56,750 --> 00:01:01,550
+Track AMC contracts
+
+12
+00:01:02,250 --> 00:01:07,050
+Review AMC visit planning
+
+13
+00:01:07,750 --> 00:01:12,550
+Monitor inventory and spare parts
+
+14
+00:01:13,250 --> 00:01:18,050
+View stock movement records
+
+15
+00:01:18,750 --> 00:01:24,050
+Record material issued to teams
+
+16
+00:01:24,750 --> 00:01:29,550
+Review reports and business control

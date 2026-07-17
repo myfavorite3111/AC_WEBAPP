@@ -1,0 +1,3 @@
+file '/Users/yuvraj/Documents/AC WEBAPP/puriaccooling-demo/marketing-assets/video-production/raw-recordings/whatsapp-title.mp4'
+file '/Users/yuvraj/Documents/AC WEBAPP/puriaccooling-demo/marketing-assets/video-production/raw-recordings/whatsapp-captioned.mp4'
+file '/Users/yuvraj/Documents/AC WEBAPP/puriaccooling-demo/marketing-assets/video-production/raw-recordings/whatsapp-closing.mp4'
