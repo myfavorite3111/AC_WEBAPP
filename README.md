@@ -67,6 +67,21 @@ Main variables:
 - `DEMO_LOGO_TEXT`
 - `DEMO_BRAND_YEAR`
 
+## Railway Deployment
+
+Use this repository as a demo deployment only. Add a PostgreSQL database in Railway and link it to the web service so Railway provides `DATABASE_URL`.
+
+Required Railway variables:
+
+- `DJANGO_SECRET_KEY`: set a new long random value
+- `DJANGO_DEBUG`: `False`
+- `DJANGO_ALLOWED_HOSTS`: `.railway.app,your-custom-domain.com`
+- `DJANGO_CSRF_TRUSTED_ORIGINS`: `https://your-railway-domain.up.railway.app,https://your-custom-domain.com`
+- `DEMO_COMPANY_NAME`: `Demo AC Company` or your demo brand
+- `DEMO_APP_NAME`: `Air Conditioning Services ERP`
+
+The `Procfile` runs migrations, collects static files, reseeds fictional demo data, and starts Gunicorn. The reset command uses `DEMO_RESET_CONFIRM=allow` inside the Procfile so it can run safely on the demo Railway database.
+
 ## Safety Notes
 
 - This demo uses its own SQLite database at `puriaccooling-demo/db.sqlite3`.

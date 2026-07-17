@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+import os
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -75,11 +76,15 @@ class Command(BaseCommand):
 
 
     def assert_demo_environment(self):
+        if os.getenv("DEMO_RESET_CONFIRM") == "allow":
+            return
+
         base_dir = str(settings.BASE_DIR)
         db_name = str(settings.DATABASES["default"].get("NAME", ""))
         if not base_dir.endswith("puriaccooling-demo") or "puriaccooling-demo" not in db_name:
             raise CommandError(
-                "Refusing to reset data because this is not the puriaccooling-demo project/database."
+                "Refusing to reset data because this is not the puriaccooling-demo project/database. "
+                "Set DEMO_RESET_CONFIRM=allow only for the standalone demo deployment."
             )
 
     def clear_data(self):
