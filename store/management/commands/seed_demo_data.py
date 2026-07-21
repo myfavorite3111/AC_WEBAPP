@@ -16,7 +16,18 @@ from customers.models import Customer, CustomerServiceSchedule
 from material_issue.models import MaterialIssue, MaterialIssueItem
 from projects.models import CustomerProject
 from service.models import ServiceComplaint
-from store.models import StoreCategory, StoreItem, StoreTransaction
+from store.models import (
+    StoreCategory,
+    StoreItem,
+    StoreTransaction,
+    Zone,
+    InventoryUnit,
+    UnitStatusEvent,
+    InstallationJob,
+    WarrantyRegistration,
+    ScrapReturnRecord,
+    ScrapReturnEvent,
+)
 
 
 D = Decimal
@@ -55,6 +66,7 @@ class Command(BaseCommand):
         )
         Profile.objects.create(user=ceo, role="CEO")
         Profile.objects.create(user=manager, role="MANAGER")
+        technicians = self.create_technicians()
 
         customers = self.create_customers(today, manager)
         projects = self.create_projects(today, customers, manager)
@@ -64,6 +76,8 @@ class Command(BaseCommand):
         self.create_services(today, customers, manager)
         self.create_amc(today, customers, manager)
         self.create_general_transactions(projects, items, manager)
+        self.create_unit_tracking_demo(today, items, customers, technicians, manager)
+        self.create_scrap_loss_demo(today, customers, projects, technicians, manager, ceo)
         self.shape_service_schedules(today)
 
         self.stdout.write(self.style.SUCCESS("Demo database seeded successfully."))
@@ -71,8 +85,26 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Created {Customer.objects.count()} customers, {CustomerProject.objects.count()} projects, "
             f"{ProjectBOQ.objects.count()} BOQs, {MaterialIssue.objects.count()} material issues, "
-            f"{StoreItem.objects.count()} store items, {StoreTransaction.objects.count()} transactions."
+            f"{StoreItem.objects.count()} store items, {StoreTransaction.objects.count()} transactions, "
+            f"{InventoryUnit.objects.count()} serial units, {ScrapReturnRecord.objects.count()} scrap return records."
         )
+
+    def create_technicians(self):
+        technicians = {}
+        for username, first, last in [
+            ("tech_rahul", "Rahul", "Singh"),
+            ("tech_sana", "Sana", "Khan"),
+            ("tech_imran", "Imran", "Ali"),
+        ]:
+            technicians[username] = User.objects.create_user(
+                username=username,
+                email=f"{username}@demo.example.com",
+                password="Demo@12345",
+                first_name=first,
+                last_name=last,
+                is_staff=True,
+            )
+        return technicians
 
 
     def assert_demo_environment(self):
@@ -89,6 +121,13 @@ class Command(BaseCommand):
 
     def clear_data(self):
         for model in [
+            ScrapReturnEvent,
+            ScrapReturnRecord,
+            WarrantyRegistration,
+            InstallationJob,
+            UnitStatusEvent,
+            InventoryUnit,
+            Zone,
             MaterialIssueItem,
             MaterialIssue,
             StoreTransaction,
@@ -331,6 +370,107 @@ class Command(BaseCommand):
         StoreTransaction.objects.create(item=items["Remote Controller Universal"], transaction_type="IN", purpose="PURCHASE", quantity=D("12"), issued_to="Demo Supplier", description="Demo purchase invoice INV-DEMO-1001", created_by=user)
         StoreTransaction.objects.create(item=items["Fan Motor Indoor"], transaction_type="OUT", purpose="SERVICE", quantity=D("1"), service_customer_name="Rohan Mehta", issued_to="Technician Imran", description="Demo service replacement", created_by=user)
         StoreTransaction.objects.create(item=items["Insulation Tube 13 mm"], transaction_type="OUT", purpose="PROJECT", project=projects["Residential tower split AC installation"], quantity=D("14"), issued_to="Team Bravo", description="Demo project material issue outside BOQ", created_by=user)
+
+
+    def create_unit_tracking_demo(self, today, items, customers, technicians, user):
+        zones = {
+            "Row A": Zone.objects.create(name="Row A", warehouse_name="Main Warehouse", notes="Split and wall-mounted units"),
+            "Row B": Zone.objects.create(name="Row B", warehouse_name="Main Warehouse", notes="Outdoor units"),
+            "Yard 1": Zone.objects.create(name="Yard 1", warehouse_name="Main Warehouse", notes="Large VRV and ductable units"),
+        }
+        unit_specs = [
+            ("Wall Mount Indoor Unit 1.5 TR", "DAI-WMI-26001", "IN_WAREHOUSE", "Row A", "tech_rahul", None, "Received sealed."),
+            ("Wall Mount Indoor Unit 1.5 TR", "DAI-WMI-26002", "DISPATCHED", "Row A", "tech_rahul", "Aarav Sharma", "Dispatched for apartment installation."),
+            ("Wall Mount Indoor Unit 1.5 TR", "VOLT-WMI-26003", "WITH_INSTALLATION_TEAM", None, "tech_sana", "Green Valley Residency", "With team for Tower 3."),
+            ("Cassette Indoor Unit 2.0 TR", "HIT-CAS-26004", "INSTALLED", None, "tech_imran", "Bluebay Hotel", "Installed and tested."),
+            ("VRV Indoor Unit 2 HP", "DAI-VRV-IN-26005", "IN_WAREHOUSE", "Yard 1", "tech_rahul", None, "Ready for dispatch."),
+            ("VRV Outdoor Unit 12 HP", "DAI-VRV-OUT-26006", "WITH_INSTALLATION_TEAM", None, "tech_sana", "Northstar Business Park", "Handoff to installation team."),
+            ("Outdoor Condensing Unit 3.0 TR", "VOLT-ODU-26007", "RETURNED_TO_WAREHOUSE", "Row B", "tech_imran", "MetroCare Clinic", "Returned due site readiness issue."),
+            ("Outdoor Condensing Unit 3.0 TR", "HIT-ODU-26008", "DAMAGED", "Row B", "tech_rahul", None, "Outdoor casing dent found during movement."),
+            ("VRV Indoor Unit 2 HP", "DAI-VRV-IN-26009", "MISSING", None, "tech_sana", "Northstar Business Park", "Not traceable after site handoff."),
+            ("Cassette Indoor Unit 2.0 TR", "HIT-CAS-26010", "INSTALLED", None, "tech_imran", "Summit Mall", "Installed at food court."),
+        ]
+        for item_key, serial, status, zone_name, tech_key, customer_name, note in unit_specs:
+            tech = technicians[tech_key]
+            customer = customers.get(customer_name) if customer_name else None
+            zone = zones.get(zone_name) if zone_name else None
+            unit = InventoryUnit.objects.create(
+                store_item=items[item_key],
+                serial_number=serial,
+                current_status="IN_WAREHOUSE",
+                current_zone=zones.get("Row A"),
+                current_handler=user,
+                customer=customer,
+                condition_note="Demo intake event.",
+            )
+            UnitStatusEvent.objects.create(unit=unit, status="IN_WAREHOUSE", zone=unit.current_zone, handler=user, condition_note="Demo intake event.")
+            if status != "IN_WAREHOUSE":
+                unit.current_status = status
+                unit.current_zone = zone
+                unit.current_handler = tech
+                unit.customer = customer
+                unit.condition_note = note
+                unit.save(update_fields=["current_status", "current_zone", "current_handler", "customer", "condition_note", "updated_at"])
+                UnitStatusEvent.objects.create(unit=unit, status=status, zone=zone, handler=tech, condition_note=note)
+            if status in {"WITH_INSTALLATION_TEAM", "INSTALLED", "RETURNED_TO_WAREHOUSE"} and customer:
+                job = InstallationJob.objects.create(
+                    unit=unit,
+                    customer=customer,
+                    technician=tech,
+                    scheduled_date=today - timedelta(days=6),
+                    completed_date=today - timedelta(days=1) if status == "INSTALLED" else None,
+                    status="INSTALLED" if status == "INSTALLED" else ("RETURNED" if status == "RETURNED_TO_WAREHOUSE" else "IN_PROGRESS"),
+                    warranty_registered=status == "INSTALLED",
+                    notes="Demo installation handoff record.",
+                )
+                if status == "INSTALLED":
+                    WarrantyRegistration.objects.create(
+                        installation_job=job,
+                        customer_name=customer.customer_name,
+                        customer_phone=customer.phone_number,
+                        serial_number=serial,
+                        brand=unit.store_item.category.category_name,
+                        product=f"{unit.store_item.item_description} {unit.store_item.size or ''}".strip(),
+                        install_date=job.completed_date,
+                    )
+
+    def create_scrap_loss_demo(self, today, customers, projects, technicians, user, ceo):
+        specs = [
+            ("Maya Kapoor", None, "tech_rahul", "Old indoor fan motor", "1", "0", "SCRAP", "1800", today - timedelta(days=3), "PENDING", "Pending old part return."),
+            ("Aarav Sharma", None, "tech_sana", "Faulty remote controller", "2", "1", "REUSABLE", "450", today - timedelta(days=1), "PARTIALLY_RETURNED", "One remote returned, one pending."),
+            ("Bluebay Hotel", "Banquet hall ductable AC upgrade", "tech_imran", "Damaged copper scrap bundle", "18", "18", "SCRAP", "220", today - timedelta(days=2), "RETURNED", "Returned to store."),
+            ("Northstar Business Park", "VRV retrofit - Block A", "tech_sana", "Old PCB board", "1", "0", "LOST", "6500", today - timedelta(days=9), "LOST", "Marked lost after site audit."),
+            ("Green Valley Residency", "Residential tower split AC installation", "tech_rahul", "Reusable drain pump", "1", "0", "REUSABLE", "3200", today - timedelta(days=12), "APPROVED_LOSS", "Approved as loss by owner."),
+            ("Rohan Mehta", None, "tech_imran", "Old compressor shell", "1", "0", "SCRAP", "2800", today + timedelta(days=4), "PENDING", "Return due next week."),
+        ]
+        for customer_name, project_name, tech_key, item_name, expected, received, condition, value, due, status, remarks in specs:
+            customer = customers[customer_name]
+            project = projects.get(project_name) if project_name else None
+            record = ScrapReturnRecord.objects.create(
+                customer=customer,
+                project=project,
+                project_reference=project.site_name if project else customer.customer_name,
+                complaint_or_job_reference="Demo service/job card",
+                technician=technicians[tech_key],
+                item_name=item_name,
+                quantity_expected=D(expected),
+                quantity_received=D(received),
+                condition=condition,
+                approx_value=D(value),
+                due_return_date=due,
+                status=status,
+                remarks=remarks,
+                approved_by=ceo if status in {"LOST", "APPROVED_LOSS"} else None,
+                created_by=user,
+            )
+            ScrapReturnEvent.objects.create(scrap_return_record=record, event_type="CREATED", remarks="Demo scrap return expectation created.", logged_by=user)
+            if D(received) > 0:
+                event_type = "FULLY_RETURNED" if status == "RETURNED" else "PARTIAL_RETURN_LOGGED"
+                ScrapReturnEvent.objects.create(scrap_return_record=record, event_type=event_type, quantity_logged=D(received), remarks="Demo return logged.", logged_by=user)
+            if status == "LOST":
+                ScrapReturnEvent.objects.create(scrap_return_record=record, event_type="MARKED_LOST", remarks=remarks, logged_by=ceo)
+            if status == "APPROVED_LOSS":
+                ScrapReturnEvent.objects.create(scrap_return_record=record, event_type="APPROVED_LOSS", remarks=remarks, logged_by=ceo)
 
     def shape_service_schedules(self, today):
         schedules = list(CustomerServiceSchedule.objects.select_related("customer").order_by("service_date"))

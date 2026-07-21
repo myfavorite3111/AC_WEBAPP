@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Serial Unit Tracking{% endblock %}
+{% block content %}
+<div class="min-h-screen bg-slate-50 px-4 py-8"><div class="max-w-7xl mx-auto">
+  <div class="bg-gradient-to-r from-[#0F4C81] to-[#1B6CA8] rounded-3xl p-7 shadow-xl mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div><h1 class="text-3xl md:text-4xl font-black text-white">Serial Unit Tracking</h1><p class="text-blue-100 mt-2">Track every AC unit from warehouse rack to installation.</p></div>
+    <div class="flex flex-wrap gap-3"><a href="{% url 'add_unit' %}" class="bg-white text-[#0F4C81] px-5 py-3 rounded-2xl font-black">+ Add Unit</a><a href="{% url 'unit_scan' %}" class="bg-green-500 text-white px-5 py-3 rounded-2xl font-black">Scan QR</a><a href="{% url 'unit_inventory_csv' %}" class="bg-slate-900 text-white px-5 py-3 rounded-2xl font-black">Export CSV</a></div>
+  </div>
+  <div class="bg-white rounded-3xl border p-5 mb-6"><form method="get" class="grid grid-cols-1 md:grid-cols-12 gap-3">
+    <input name="search" value="{{ search }}" placeholder="Serial, product, customer..." class="md:col-span-4 border rounded-2xl px-4 py-3">
+    <select name="status" class="md:col-span-3 border rounded-2xl px-4 py-3"><option value="">All Status</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    <select name="zone" class="md:col-span-3 border rounded-2xl px-4 py-3"><option value="">All Zones</option>{% for zone in zones %}<option value="{{ zone.id }}" {% if zone_id == zone.id|stringformat:'s' %}selected{% endif %}>{{ zone.name }}</option>{% endfor %}</select>
+    <button class="md:col-span-2 bg-[#0F4C81] text-white rounded-2xl px-4 py-3 font-black">Search</button>
+  </form></div>
+  <div class="bg-white rounded-3xl border shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-100"><tr><th class="p-4">Serial</th><th class="p-4">Product</th><th class="p-4">Status</th><th class="p-4">Zone</th><th class="p-4">Handler</th><th class="p-4">Action</th></tr></thead><tbody>
+    {% for unit in units %}<tr class="border-t"><td class="p-4 font-black text-blue-800">{{ unit.serial_number }}</td><td class="p-4"><b>{{ unit.store_item.item_description }}</b><br><span class="text-sm text-slate-500">{{ unit.store_item.size|default:'' }}</span></td><td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-black {% if unit.current_status == 'DAMAGED' or unit.current_status == 'MISSING' %}bg-red-100 text-red-700{% elif unit.current_status == 'INSTALLED' %}bg-green-100 text-green-700{% else %}bg-blue-100 text-blue-700{% endif %}">{{ unit.get_current_status_display }}</span></td><td class="p-4">{{ unit.current_zone.name|default:'-' }}</td><td class="p-4">{{ unit.current_handler.username|default:'-' }}</td><td class="p-4"><a href="{% url 'unit_detail' unit.id %}" class="inline-block bg-slate-900 text-white rounded-xl px-4 py-2 font-bold">Open</a></td></tr>{% empty %}<tr><td colspan="6" class="p-8 text-center font-bold text-slate-500">No serial units found.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+</div></div>
+{% endblock %}

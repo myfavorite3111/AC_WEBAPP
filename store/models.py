@@ -444,3 +444,207 @@ class StoreTransaction(models.Model):
 
     def __str__(self):
         return f"{self.transaction_id} - {self.item.item_description} - {self.transaction_type}"
+
+
+class Zone(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    warehouse_name = models.CharField(max_length=160, default="Main Warehouse")
+    notes = models.CharField(max_length=250, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["warehouse_name", "name"]
+
+    def __str__(self):
+        return f"{self.warehouse_name} - {self.name}"
+
+
+class InventoryUnit(models.Model):
+    STATUS_CHOICES = (
+        ("IN_WAREHOUSE", "In Warehouse"),
+        ("DISPATCHED", "Dispatched"),
+        ("WITH_INSTALLATION_TEAM", "With Installation Team"),
+        ("INSTALLED", "Installed"),
+        ("RETURNED_TO_WAREHOUSE", "Returned to Warehouse"),
+        ("DAMAGED", "Marked Damaged"),
+        ("MISSING", "Marked Missing"),
+    )
+
+    store_item = models.ForeignKey(StoreItem, on_delete=models.CASCADE, related_name="serial_units")
+    serial_number = models.CharField(max_length=120, unique=True)
+    current_status = models.CharField(max_length=40, choices=STATUS_CHOICES, default="IN_WAREHOUSE")
+    current_zone = models.ForeignKey(Zone, on_delete=models.SET_NULL, blank=True, null=True, related_name="units")
+    current_handler = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="handled_inventory_units")
+    customer = models.ForeignKey("customers.Customer", on_delete=models.SET_NULL, blank=True, null=True, related_name="inventory_units")
+    condition_note = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["store_item__item_description", "serial_number"]
+
+    def __str__(self):
+        return f"{self.serial_number} - {self.store_item.item_description}"
+
+    def valid_next_statuses(self):
+        transitions = {
+            "IN_WAREHOUSE": ["DISPATCHED", "DAMAGED", "MISSING"],
+            "DISPATCHED": ["WITH_INSTALLATION_TEAM", "RETURNED_TO_WAREHOUSE", "DAMAGED", "MISSING"],
+            "WITH_INSTALLATION_TEAM": ["INSTALLED", "RETURNED_TO_WAREHOUSE", "DAMAGED", "MISSING"],
+            "RETURNED_TO_WAREHOUSE": ["IN_WAREHOUSE", "DAMAGED", "MISSING"],
+            "INSTALLED": ["DAMAGED", "MISSING"],
+            "DAMAGED": ["RETURNED_TO_WAREHOUSE"],
+            "MISSING": ["RETURNED_TO_WAREHOUSE"],
+        }
+        return transitions.get(self.current_status, [])
+
+    def status_label(self):
+        return dict(self.STATUS_CHOICES).get(self.current_status, self.current_status)
+
+
+class UnitStatusEvent(models.Model):
+    unit = models.ForeignKey(InventoryUnit, on_delete=models.CASCADE, related_name="status_events")
+    status = models.CharField(max_length=40, choices=InventoryUnit.STATUS_CHOICES)
+    zone = models.ForeignKey(Zone, on_delete=models.SET_NULL, blank=True, null=True, related_name="unit_events")
+    handler = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="unit_status_events")
+    photo = models.ImageField(upload_to="unit_status_photos/", blank=True, null=True)
+    condition_note = models.TextField(blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self):
+        return f"{self.unit.serial_number} - {self.status}"
+
+
+class InstallationJob(models.Model):
+    STATUS_CHOICES = (
+        ("SCHEDULED", "Scheduled"),
+        ("IN_PROGRESS", "In Progress"),
+        ("INSTALLED", "Installed"),
+        ("RETURNED", "Returned"),
+    )
+
+    unit = models.ForeignKey(InventoryUnit, on_delete=models.CASCADE, related_name="installation_jobs")
+    customer = models.ForeignKey("customers.Customer", on_delete=models.CASCADE, related_name="installation_jobs")
+    technician = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="installation_jobs")
+    scheduled_date = models.DateField()
+    completed_date = models.DateField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="SCHEDULED")
+    warranty_registered = models.BooleanField(default=False)
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-scheduled_date", "-id"]
+
+    def __str__(self):
+        return f"{self.unit.serial_number} - {self.customer.customer_name}"
+
+
+class WarrantyRegistration(models.Model):
+    installation_job = models.OneToOneField(InstallationJob, on_delete=models.CASCADE, related_name="warranty_registration")
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=20)
+    serial_number = models.CharField(max_length=120)
+    brand = models.CharField(max_length=160)
+    product = models.CharField(max_length=220)
+    install_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-install_date"]
+
+    def __str__(self):
+        return f"Warranty - {self.serial_number}"
+
+
+class ScrapReturnRecord(models.Model):
+    CONDITION_CHOICES = (
+        ("SCRAP", "Scrap"),
+        ("REUSABLE", "Reusable"),
+        ("DAMAGED", "Damaged"),
+        ("LOST", "Lost"),
+    )
+    STATUS_CHOICES = (
+        ("PENDING", "Pending"),
+        ("PARTIALLY_RETURNED", "Partially Returned"),
+        ("RETURNED", "Returned"),
+        ("LOST", "Lost"),
+        ("WAIVED", "Waived"),
+        ("DEDUCTED", "Deducted From Technician"),
+        ("APPROVED_LOSS", "Approved Loss"),
+    )
+
+    material_issue = models.ForeignKey("material_issue.MaterialIssue", on_delete=models.SET_NULL, blank=True, null=True, related_name="scrap_return_records")
+    customer = models.ForeignKey("customers.Customer", on_delete=models.SET_NULL, blank=True, null=True, related_name="scrap_return_records")
+    project = models.ForeignKey(CustomerProject, on_delete=models.SET_NULL, blank=True, null=True, related_name="scrap_return_records")
+    project_reference = models.CharField(max_length=220, blank=True, null=True)
+    complaint_or_job_reference = models.CharField(max_length=220, blank=True, null=True)
+    technician = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="scrap_return_records")
+    item_name = models.CharField(max_length=220)
+    quantity_expected = models.DecimalField(max_digits=12, decimal_places=2)
+    quantity_received = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    condition = models.CharField(max_length=20, choices=CONDITION_CHOICES, default="SCRAP")
+    approx_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    due_return_date = models.DateField()
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="PENDING")
+    remarks = models.TextField(blank=True, null=True)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="approved_scrap_return_records")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="created_scrap_return_records")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-due_return_date", "-id"]
+
+    @property
+    def quantity_pending(self):
+        pending = self.quantity_expected - self.quantity_received
+        return pending if pending > 0 else Decimal("0.00")
+
+    @property
+    def is_overdue(self):
+        from django.utils import timezone
+        return self.due_return_date < timezone.localdate() and self.status in {"PENDING", "PARTIALLY_RETURNED"}
+
+    def refresh_status_from_quantity(self):
+        if self.quantity_received <= 0:
+            self.status = "PENDING"
+        elif self.quantity_received < self.quantity_expected:
+            self.status = "PARTIALLY_RETURNED"
+        else:
+            self.quantity_received = self.quantity_expected
+            self.status = "RETURNED"
+
+    def __str__(self):
+        return f"{self.item_name} - {self.get_status_display()}"
+
+
+class ScrapReturnEvent(models.Model):
+    EVENT_CHOICES = (
+        ("CREATED", "Created"),
+        ("PARTIAL_RETURN_LOGGED", "Partial Return Logged"),
+        ("FULLY_RETURNED", "Fully Returned"),
+        ("MARKED_LOST", "Marked Lost"),
+        ("MARKED_WAIVED", "Marked Waived"),
+        ("DEDUCTED_FROM_TECHNICIAN", "Deducted From Technician"),
+        ("APPROVED_LOSS", "Approved Loss"),
+        ("REMARK_ADDED", "Remark Added"),
+    )
+
+    scrap_return_record = models.ForeignKey(ScrapReturnRecord, on_delete=models.CASCADE, related_name="events")
+    event_type = models.CharField(max_length=40, choices=EVENT_CHOICES)
+    quantity_logged = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    photo = models.ImageField(upload_to="scrap_return_photos/", blank=True, null=True)
+    remarks = models.TextField(blank=True, null=True)
+    logged_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name="scrap_return_events")
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self):
+        return f"{self.scrap_return_record.item_name} - {self.event_type}"

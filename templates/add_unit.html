@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Add Serial Unit{% endblock %}
+{% block content %}
+<div class="min-h-screen bg-slate-50 px-4 py-8"><div class="max-w-4xl mx-auto">
+<div class="bg-gradient-to-r from-[#0F4C81] to-[#1B6CA8] rounded-3xl p-7 shadow-xl mb-6 flex justify-between items-center"><div><h1 class="text-3xl font-black text-white">Add Serial Unit</h1><p class="text-blue-100 mt-2">Create one physical AC unit with unique serial number.</p></div><a href="{% url 'unit_list' %}" class="bg-white text-[#0F4C81] px-5 py-3 rounded-2xl font-black">Back</a></div>
+{% if error %}<div class="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 font-bold text-red-700">{{ error }}</div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="bg-white rounded-3xl border p-6 grid grid-cols-1 md:grid-cols-2 gap-5">{% csrf_token %}
+<label class="font-bold">Serial Number *<input name="serial_number" required class="mt-2 w-full border rounded-2xl px-4 py-3" placeholder="DAI-INV-2026-001"></label>
+<label class="font-bold">Product *<select name="store_item" required class="mt-2 w-full border rounded-2xl px-4 py-3"><option value="">Select product</option>{% for item in items %}<option value="{{ item.id }}">{{ item.item_description }} {{ item.size|default:'' }}</option>{% endfor %}</select></label>
+<label class="font-bold">Warehouse Zone<select name="zone" class="mt-2 w-full border rounded-2xl px-4 py-3"><option value="">Unassigned</option>{% for zone in zones %}<option value="{{ zone.id }}">{{ zone.name }}</option>{% endfor %}</select></label>
+<label class="font-bold">Receipt Photo<input name="photo" type="file" accept="image/*" capture="environment" class="mt-2 w-full border rounded-2xl px-4 py-3"></label>
+<label class="font-bold md:col-span-2">Condition Note<textarea name="condition_note" rows="3" class="mt-2 w-full border rounded-2xl px-4 py-3" placeholder="Received sealed, box OK"></textarea></label>
+<button class="md:col-span-2 bg-green-600 text-white rounded-2xl px-6 py-4 font-black">Save Unit & Generate QR</button>
+</form></div></div>{% endblock %}

@@ -49,7 +49,7 @@ Store Dashboard
         </div>
 
         <!-- Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-5 mb-8">
 
             <div class="bg-white rounded-3xl p-6 shadow-sm border hover:shadow-lg transition">
                 <p class="text-slate-500 text-sm font-bold">
@@ -95,6 +95,21 @@ Store Dashboard
                     {{ total_transactions }}
                 </h2>
             </div>
+
+            <a href="{% url 'unit_list' %}" class="bg-white rounded-3xl p-6 shadow-sm border hover:shadow-lg transition block">
+                <p class="text-slate-500 text-sm font-bold">Serial Units</p>
+                <h2 class="text-4xl font-black text-blue-700 mt-2">{{ serial_unit_count }}</h2>
+            </a>
+
+            <a href="{% url 'shrinkage_report' %}" class="bg-white rounded-3xl p-6 shadow-sm border hover:shadow-lg transition block">
+                <p class="text-slate-500 text-sm font-bold">Damaged/Missing</p>
+                <h2 class="text-4xl font-black text-red-600 mt-2">{{ damaged_missing_count }}</h2>
+            </a>
+
+            <a href="{% url 'scrap_return_list' %}" class="bg-white rounded-3xl p-6 shadow-sm border hover:shadow-lg transition block">
+                <p class="text-slate-500 text-sm font-bold">Pending Scrap</p>
+                <h2 class="text-4xl font-black text-orange-600 mt-2">{{ pending_scrap_count }}</h2>
+            </a>
 
         </div>
 
@@ -149,7 +164,7 @@ Store Dashboard
         </div>
 
         <!-- Quick Menu -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-5 mb-8">
 
             <a href="{% url 'store_category_list' %}"
                class="bg-white border rounded-3xl p-6 shadow-sm hover:shadow-lg transition">
@@ -188,6 +203,21 @@ Store Dashboard
                     Stock IN / OUT / Return History.
                 </p>
 
+            </a>
+
+            <a href="{% url 'unit_list' %}" class="bg-white border rounded-3xl p-6 shadow-sm hover:shadow-lg transition">
+                <h3 class="text-xl font-black text-blue-700">Serial Units</h3>
+                <p class="text-slate-500 mt-2">Scan, handoff and install unit serials.</p>
+            </a>
+
+            <a href="{% url 'zone_map' %}" class="bg-white border rounded-3xl p-6 shadow-sm hover:shadow-lg transition">
+                <h3 class="text-xl font-black text-cyan-700">Zone Map</h3>
+                <p class="text-slate-500 mt-2">Warehouse rack view by zone.</p>
+            </a>
+
+            <a href="{% url 'scrap_return_list' %}" class="bg-white border rounded-3xl p-6 shadow-sm hover:shadow-lg transition">
+                <h3 class="text-xl font-black text-red-700">Scrap & Loss</h3>
+                <p class="text-slate-500 mt-2">Track pending old part returns.</p>
             </a>
 
         </div>

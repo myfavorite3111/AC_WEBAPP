@@ -1,20 +1,33 @@
 # store/views.py
 
 import time
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, models, transaction as db_transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, F, Q, Sum
+from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 
+from django.utils import timezone
+from django.contrib.auth.models import User
+
+from customers.models import Customer
 from projects.models import CustomerProject
 
 from .models import (
     StoreCategory,
     StoreItem,
     StoreTransaction,
+    Zone,
+    InventoryUnit,
+    UnitStatusEvent,
+    InstallationJob,
+    WarrantyRegistration,
+    ScrapReturnRecord,
+    ScrapReturnEvent,
 )
 
 # Internal transaction history cache — reduces repeated DB hits on item detail views
@@ -71,6 +84,10 @@ def store_dashboard(request):
             stock_85_used_count += 1
 
     total_transactions = StoreTransaction.objects.count()
+    serial_unit_count = InventoryUnit.objects.count()
+    damaged_missing_count = InventoryUnit.objects.filter(current_status__in=["DAMAGED", "MISSING"]).count()
+    pending_scrap_count = ScrapReturnRecord.objects.filter(status__in=["PENDING", "PARTIALLY_RETURNED"]).count()
+    pending_scrap_value = sum(record.quantity_pending * record.approx_value for record in ScrapReturnRecord.objects.filter(status__in=["PENDING", "PARTIALLY_RETURNED"]))
 
     low_stock_list = sorted(
         [
@@ -116,6 +133,10 @@ def store_dashboard(request):
         "low_stock_count": low_stock_count,
         "stock_85_used_count": stock_85_used_count,
         "total_transactions": total_transactions,
+        "serial_unit_count": serial_unit_count,
+        "damaged_missing_count": damaged_missing_count,
+        "pending_scrap_count": pending_scrap_count,
+        "pending_scrap_value": pending_scrap_value,
         "recent_transactions": recent_transactions,
         "low_stock_list": low_stock_list,
         "stock_85_used_list": stock_85_used_list,
@@ -792,3 +813,417 @@ def delete_store_transaction(request, id):
 
     messages.success(request, "Transaction deleted successfully.")
     return redirect("store_transaction_list")
+
+
+def user_can_manage_scrap(request):
+    role = getattr(getattr(request.user, "profile", None), "role", "")
+    return request.user.is_superuser or request.user.is_staff or role in {"CEO", "MANAGER", "WAREHOUSE"}
+
+
+def user_is_owner_manager(request):
+    role = getattr(getattr(request.user, "profile", None), "role", "")
+    return request.user.is_superuser or role in {"CEO", "MANAGER"}
+
+
+def create_unit_event(unit, status, zone, handler, note="", photo=None):
+    return UnitStatusEvent.objects.create(
+        unit=unit,
+        status=status,
+        zone=zone,
+        handler=handler,
+        condition_note=note,
+        photo=photo,
+    )
+
+
+@login_required
+def unit_list(request):
+    search = request.GET.get("search", "").strip()
+    status = request.GET.get("status", "").strip()
+    zone_id = request.GET.get("zone", "").strip()
+    brand = request.GET.get("brand", "").strip()
+
+    units = InventoryUnit.objects.select_related(
+        "store_item", "store_item__category", "current_zone", "current_handler", "customer"
+    ).all()
+
+    if search:
+        units = units.filter(
+            Q(serial_number__icontains=search)
+            | Q(store_item__item_description__icontains=search)
+            | Q(store_item__size__icontains=search)
+            | Q(store_item__category__category_name__icontains=search)
+            | Q(customer__customer_name__icontains=search)
+        )
+    if status:
+        units = units.filter(current_status=status)
+    if zone_id:
+        units = units.filter(current_zone_id=zone_id)
+    if brand:
+        units = units.filter(store_item__remarks__icontains=brand)
+
+    return render(request, "unit_list.html", {
+        "units": units.order_by("serial_number"),
+        "search": search,
+        "status": status,
+        "zone_id": zone_id,
+        "brand": brand,
+        "zones": Zone.objects.all(),
+        "status_choices": InventoryUnit.STATUS_CHOICES,
+    })
+
+
+@login_required
+def add_unit(request):
+    error = None
+    items = StoreItem.objects.select_related("category").filter(unit="NOS").order_by("item_description")
+    zones = Zone.objects.all()
+    if request.method == "POST":
+        serial_number = request.POST.get("serial_number", "").strip()
+        item_id = request.POST.get("store_item")
+        zone_id = request.POST.get("zone") or None
+        note = request.POST.get("condition_note", "").strip()
+        photo = request.FILES.get("photo")
+        if not serial_number:
+            error = "Serial number is required."
+        elif InventoryUnit.objects.filter(serial_number__iexact=serial_number).exists():
+            error = "This serial number already exists."
+        elif not item_id:
+            error = "Please select product/item."
+        else:
+            unit = InventoryUnit.objects.create(
+                store_item=get_object_or_404(StoreItem, id=item_id),
+                serial_number=serial_number,
+                current_zone=get_object_or_404(Zone, id=zone_id) if zone_id else None,
+                current_handler=request.user,
+                condition_note=note,
+            )
+            create_unit_event(unit, unit.current_status, unit.current_zone, request.user, note, photo)
+            messages.success(request, "Serial unit added and QR label is ready.")
+            return redirect("unit_detail", id=unit.id)
+    return render(request, "add_unit.html", {"items": items, "zones": zones, "error": error})
+
+
+@login_required
+def unit_detail(request, id):
+    unit = get_object_or_404(
+        InventoryUnit.objects.select_related("store_item", "store_item__category", "current_zone", "current_handler", "customer"),
+        id=id,
+    )
+    events = unit.status_events.select_related("zone", "handler")
+    jobs = unit.installation_jobs.select_related("customer", "technician")
+    return render(request, "unit_detail.html", {
+        "unit": unit,
+        "events": events,
+        "jobs": jobs,
+        "valid_next_statuses": unit.valid_next_statuses(),
+        "status_choices": InventoryUnit.STATUS_CHOICES,
+    })
+
+
+@login_required
+def update_unit_status(request, id):
+    unit = get_object_or_404(InventoryUnit, id=id)
+    zones = Zone.objects.all()
+    technicians = User.objects.filter(is_active=True).order_by("username")
+    customers = Customer.objects.filter(is_active=True).order_by("customer_name")
+    error = None
+    if request.method == "POST":
+        new_status = request.POST.get("status")
+        zone_id = request.POST.get("zone") or None
+        handler_id = request.POST.get("handler") or None
+        customer_id = request.POST.get("customer") or None
+        note = request.POST.get("condition_note", "").strip()
+        photo = request.FILES.get("photo")
+        valid_statuses = unit.valid_next_statuses()
+        if new_status not in valid_statuses:
+            error = "Please select a valid next status."
+        elif new_status in {"DAMAGED", "MISSING"} and (not note or not photo):
+            error = "Photo and condition note are required for damaged or missing units."
+        else:
+            zone = get_object_or_404(Zone, id=zone_id) if zone_id else None
+            handler = get_object_or_404(User, id=handler_id) if handler_id else request.user
+            customer = get_object_or_404(Customer, id=customer_id) if customer_id else unit.customer
+            unit.current_status = new_status
+            unit.current_zone = zone
+            unit.current_handler = handler
+            unit.customer = customer
+            unit.condition_note = note
+            unit.save(update_fields=["current_status", "current_zone", "current_handler", "customer", "condition_note", "updated_at"])
+            create_unit_event(unit, new_status, zone, handler, note, photo)
+            if new_status == "WITH_INSTALLATION_TEAM" and customer:
+                InstallationJob.objects.get_or_create(
+                    unit=unit,
+                    customer=customer,
+                    technician=handler,
+                    status="SCHEDULED",
+                    defaults={"scheduled_date": timezone.localdate(), "notes": "Auto-created from unit handoff."},
+                )
+            if new_status == "INSTALLED":
+                job = unit.installation_jobs.order_by("-id").first()
+                if job:
+                    job.status = "INSTALLED"
+                    job.completed_date = timezone.localdate()
+                    job.warranty_registered = True
+                    job.save(update_fields=["status", "completed_date", "warranty_registered", "updated_at"])
+                    WarrantyRegistration.objects.get_or_create(
+                        installation_job=job,
+                        defaults={
+                            "customer_name": job.customer.customer_name,
+                            "customer_phone": job.customer.phone_number,
+                            "serial_number": unit.serial_number,
+                            "brand": unit.store_item.category.category_name,
+                            "product": f"{unit.store_item.item_description} {unit.store_item.size or ''}".strip(),
+                            "install_date": job.completed_date,
+                        },
+                    )
+            messages.success(request, "Unit status logged successfully.")
+            return redirect("unit_detail", id=unit.id)
+    return render(request, "update_unit_status.html", {
+        "unit": unit,
+        "zones": zones,
+        "technicians": technicians,
+        "customers": customers,
+        "valid_next_statuses": unit.valid_next_statuses(),
+        "status_choices": InventoryUnit.STATUS_CHOICES,
+        "error": error,
+    })
+
+
+@login_required
+def unit_scan(request):
+    return render(request, "unit_scan.html")
+
+
+@login_required
+def zone_map(request):
+    brand = request.GET.get("brand", "").strip()
+    product = request.GET.get("product", "").strip()
+    zones = Zone.objects.prefetch_related("units__store_item", "units__current_handler").all()
+    units = InventoryUnit.objects.select_related("store_item", "current_zone", "current_handler")
+    if brand:
+        units = units.filter(store_item__category__category_name__icontains=brand)
+    if product:
+        units = units.filter(store_item__item_description__icontains=product)
+    for zone in zones:
+        zone.filtered_units = list(units.filter(current_zone=zone))
+    unassigned_units = list(units.filter(current_zone__isnull=True))
+    return render(request, "zone_map.html", {"zones": zones, "unassigned_units": unassigned_units, "brand": brand, "product": product})
+
+
+@login_required
+def shrinkage_report(request):
+    zone_id = request.GET.get("zone", "").strip()
+    staff_id = request.GET.get("staff", "").strip()
+    brand = request.GET.get("brand", "").strip()
+    from_date = request.GET.get("from_date", "").strip()
+    to_date = request.GET.get("to_date", "").strip()
+    units = InventoryUnit.objects.select_related("store_item", "store_item__category", "current_zone", "current_handler").filter(current_status__in=["DAMAGED", "MISSING"])
+    if zone_id:
+        units = units.filter(current_zone_id=zone_id)
+    if staff_id:
+        units = units.filter(current_handler_id=staff_id)
+    if brand:
+        units = units.filter(store_item__category__category_name__icontains=brand)
+    if from_date:
+        units = units.filter(updated_at__date__gte=from_date)
+    if to_date:
+        units = units.filter(updated_at__date__lte=to_date)
+    return render(request, "shrinkage_report.html", {"units": units, "zones": Zone.objects.all(), "staff": User.objects.all(), "filters": request.GET})
+
+
+@login_required
+def reorder_suggestions(request):
+    today = timezone.localdate()
+    suggestions = []
+    for item in StoreItem.objects.select_related("category").all():
+        installed_last_year = InventoryUnit.objects.filter(
+            store_item=item,
+            status_events__status="INSTALLED",
+            status_events__timestamp__date__year=today.year - 1,
+            status_events__timestamp__date__month=today.month,
+        ).distinct().count()
+        recent_dispatches = InventoryUnit.objects.filter(
+            store_item=item,
+            status_events__status__in=["DISPATCHED", "WITH_INSTALLATION_TEAM", "INSTALLED"],
+            status_events__timestamp__date__gte=today - timedelta(days=90),
+        ).distinct().count()
+        if installed_last_year:
+            suggested = max(installed_last_year - int(item.current_stock), 0)
+            basis = "Last year same month sell-through"
+        elif recent_dispatches:
+            suggested = max(round(recent_dispatches / 3) - int(item.current_stock), 0)
+            basis = "Recent trend fallback"
+        else:
+            suggested = None
+            basis = "Insufficient data yet"
+        suggestions.append({"item": item, "suggested": suggested, "basis": basis, "recent": recent_dispatches, "last_year": installed_last_year})
+    return render(request, "reorder_suggestions.html", {"suggestions": suggestions})
+
+
+@login_required
+def unit_inventory_csv(request):
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = 'attachment; filename="unit_inventory.csv"'
+    response.write("serial_number,product,status,zone,last_handler,customer\n")
+    for unit in InventoryUnit.objects.select_related("store_item", "current_zone", "current_handler", "customer"):
+        response.write(f'"{unit.serial_number}","{unit.store_item.item_description}","{unit.status_label()}","{unit.current_zone or ""}","{unit.current_handler or ""}","{unit.customer or ""}"\n')
+    return response
+
+
+@login_required
+def scrap_return_list(request):
+    status = request.GET.get("status", "").strip()
+    technician_id = request.GET.get("technician", "").strip()
+    customer = request.GET.get("customer", "").strip()
+    overdue = request.GET.get("overdue", "").strip()
+    records = ScrapReturnRecord.objects.select_related("customer", "project", "technician", "approved_by").all()
+    if not user_can_manage_scrap(request):
+        records = records.filter(technician=request.user)
+    if status:
+        records = records.filter(status=status)
+    if technician_id:
+        records = records.filter(technician_id=technician_id)
+    if customer:
+        records = records.filter(Q(customer__customer_name__icontains=customer) | Q(project_reference__icontains=customer))
+    if overdue == "1":
+        records = [record for record in records if record.is_overdue]
+    return render(request, "scrap_return_list.html", {"records": records, "status_choices": ScrapReturnRecord.STATUS_CHOICES, "technicians": User.objects.all(), "filters": request.GET, "can_manage": user_can_manage_scrap(request)})
+
+
+@login_required
+def add_scrap_return(request):
+    if not user_can_manage_scrap(request):
+        messages.error(request, "You do not have permission to create scrap return records.")
+        return redirect("scrap_return_list")
+    error = None
+    customers = Customer.objects.filter(is_active=True).order_by("customer_name")
+    projects = CustomerProject.objects.select_related("customer").all().order_by("site_name")
+    issues = __import__("material_issue.models", fromlist=["MaterialIssue"]).MaterialIssue.objects.all().order_by("-id")[:50]
+    technicians = User.objects.filter(is_active=True).order_by("username")
+    if request.method == "POST":
+        try:
+            expected = Decimal(request.POST.get("quantity_expected") or "0")
+            approx = Decimal(request.POST.get("approx_value") or "0")
+            due = request.POST.get("due_return_date") or (timezone.localdate() + timedelta(days=7))
+            item_name = request.POST.get("item_name", "").strip()
+            if not item_name:
+                error = "Item name is required."
+            elif expected <= 0:
+                error = "Expected quantity must be greater than 0."
+            else:
+                record = ScrapReturnRecord.objects.create(
+                    material_issue_id=request.POST.get("material_issue") or None,
+                    customer_id=request.POST.get("customer") or None,
+                    project_id=request.POST.get("project") or None,
+                    project_reference=request.POST.get("project_reference", "").strip(),
+                    complaint_or_job_reference=request.POST.get("complaint_or_job_reference", "").strip(),
+                    technician_id=request.POST.get("technician") or None,
+                    item_name=item_name,
+                    quantity_expected=expected,
+                    condition=request.POST.get("condition") or "SCRAP",
+                    approx_value=approx,
+                    due_return_date=due,
+                    remarks=request.POST.get("remarks", "").strip(),
+                    created_by=request.user,
+                )
+                ScrapReturnEvent.objects.create(scrap_return_record=record, event_type="CREATED", remarks=record.remarks, logged_by=request.user)
+                messages.success(request, "Scrap return expectation created.")
+                return redirect("scrap_return_detail", id=record.id)
+        except InvalidOperation:
+            error = "Invalid quantity or value."
+        except Exception as exc:
+            error = str(exc)
+    return render(request, "add_scrap_return.html", {"customers": customers, "projects": projects, "issues": issues, "technicians": technicians, "condition_choices": ScrapReturnRecord.CONDITION_CHOICES, "default_due": timezone.localdate() + timedelta(days=7), "error": error})
+
+
+@login_required
+def scrap_return_detail(request, id):
+    record = get_object_or_404(ScrapReturnRecord.objects.select_related("customer", "project", "technician", "approved_by", "created_by"), id=id)
+    if not user_can_manage_scrap(request) and record.technician_id != request.user.id:
+        messages.error(request, "You can only view your own scrap return records.")
+        return redirect("scrap_return_list")
+    return render(request, "scrap_return_detail.html", {"record": record, "events": record.events.select_related("logged_by"), "can_manage": user_can_manage_scrap(request), "can_resolve": user_is_owner_manager(request)})
+
+
+@login_required
+def log_scrap_return(request, id):
+    if not user_can_manage_scrap(request):
+        messages.error(request, "You do not have permission to log returns.")
+        return redirect("scrap_return_list")
+    record = get_object_or_404(ScrapReturnRecord, id=id)
+    error = None
+    if request.method == "POST":
+        try:
+            qty = Decimal(request.POST.get("quantity_logged") or "0")
+            if qty <= 0:
+                error = "Return quantity must be greater than 0."
+            elif qty > record.quantity_pending:
+                error = "Return quantity cannot be more than pending quantity."
+            else:
+                record.quantity_received += qty
+                record.condition = request.POST.get("condition") or record.condition
+                record.refresh_status_from_quantity()
+                record.save(update_fields=["quantity_received", "condition", "status", "updated_at"])
+                event_type = "FULLY_RETURNED" if record.status == "RETURNED" else "PARTIAL_RETURN_LOGGED"
+                ScrapReturnEvent.objects.create(scrap_return_record=record, event_type=event_type, quantity_logged=qty, photo=request.FILES.get("photo"), remarks=request.POST.get("remarks", "").strip(), logged_by=request.user)
+                messages.success(request, "Return logged successfully.")
+                return redirect("scrap_return_detail", id=record.id)
+        except InvalidOperation:
+            error = "Invalid quantity."
+    return render(request, "log_scrap_return.html", {"record": record, "condition_choices": ScrapReturnRecord.CONDITION_CHOICES, "error": error})
+
+
+@login_required
+def scrap_resolution(request):
+    if not user_is_owner_manager(request):
+        messages.error(request, "Only Owner/Manager can resolve scrap losses.")
+        return redirect("scrap_return_list")
+    records = [record for record in ScrapReturnRecord.objects.select_related("technician", "customer", "project").filter(status__in=["PENDING", "PARTIALLY_RETURNED"]) if record.is_overdue]
+    return render(request, "scrap_resolution.html", {"records": records})
+
+
+@login_required
+def resolve_scrap_return(request, id):
+    if not user_is_owner_manager(request):
+        messages.error(request, "Only Owner/Manager can resolve scrap losses.")
+        return redirect("scrap_return_list")
+    record = get_object_or_404(ScrapReturnRecord, id=id)
+    if request.method == "POST":
+        resolution = request.POST.get("resolution")
+        approver = request.POST.get("approved_by", "").strip()
+        remarks = request.POST.get("remarks", "").strip()
+        event_map = {
+            "LOST": "MARKED_LOST",
+            "WAIVED": "MARKED_WAIVED",
+            "DEDUCTED": "DEDUCTED_FROM_TECHNICIAN",
+            "APPROVED_LOSS": "APPROVED_LOSS",
+        }
+        if resolution not in event_map:
+            messages.error(request, "Invalid resolution.")
+        elif not approver:
+            messages.error(request, "Approver name is required before resolving.")
+        else:
+            record.status = resolution
+            record.approved_by = request.user
+            record.remarks = f"{record.remarks or ''}\nResolved by {approver}: {remarks}".strip()
+            record.save(update_fields=["status", "approved_by", "remarks", "updated_at"])
+            ScrapReturnEvent.objects.create(scrap_return_record=record, event_type=event_map[resolution], remarks=record.remarks, logged_by=request.user)
+            messages.success(request, "Scrap/loss record resolved.")
+    return redirect("scrap_return_detail", id=record.id)
+
+
+@login_required
+def scrap_reports(request):
+    records = ScrapReturnRecord.objects.select_related("technician", "customer", "project")
+    pending = [record for record in records if record.status in {"PENDING", "PARTIALLY_RETURNED"}]
+    losses = records.filter(status__in=["LOST", "APPROVED_LOSS", "DEDUCTED"])
+    technician_rows = records.values("technician__username").annotate(total=Count("id")).order_by("technician__username")
+    if request.GET.get("export") == "csv":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="scrap_loss_report.csv"'
+        response.write("item,technician,status,expected,received,pending,due,value\n")
+        for record in records:
+            response.write(f'"{record.item_name}","{record.technician or ""}","{record.get_status_display()}","{record.quantity_expected}","{record.quantity_received}","{record.quantity_pending}","{record.due_return_date}","{record.approx_value}"\n')
+        return response
+    return render(request, "scrap_reports.html", {"records": records, "pending": pending, "losses": losses, "technician_rows": technician_rows})
